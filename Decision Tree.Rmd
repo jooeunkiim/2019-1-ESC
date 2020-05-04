@@ -1,0 +1,85 @@
+---
+title: "Decision Tree"
+author: "김주은"
+date: "2019년 5월 24일"
+output:
+  html_document: default
+  pdf_document: default
+---
+```{r}
+library(tree)
+library(dplyr)
+library(ggplot2)
+library(e1071)
+train <- read.csv("C:/Users/Jooeun Kim/Desktop/FINAL/train_final.csv")
+test <- read.csv("C:/Users/Jooeun Kim/Desktop/FINAL/test_final.csv")
+```
+
+1. tree package  
+level을 32개까지만 지원하기 때문에 동 데이터는 빼고 돌렸다.
+```{r}
+train_lev = train %>% select(-DONG, -GU, -key)
+test_lev = test %>% select(-DONG, -GU, -key)
+treemod <- tree(price_by_area~., data = train_lev)
+summary(treemod)
+plot(treemod)
+text(treemod, cex = 0.5)
+cv.trees <- cv.tree(treemod, FUN = prune.tree, K = 5)
+plot(cv.trees)
+```
+  
+  A. 가지 4개
+```{r}
+prune4 <- prune.tree(treemod, best = 4)
+plot(prune4)
+text(prune4)
+```
+  
+  B. 가지 7개
+```{r}
+prune7 <- prune.tree(treemod, best = 7)
+plot(prune7)
+text(prune7)
+```
+    
+    
+  prediction
+```{r}
+treepred <- predict(prune7, test_lev)
+treetest <- cbind(test_lev, treepred)
+attach(treetest)
+ggplot(as.data.frame(treetest$treepred), aes(x = longitude, y = latitude, color = treepred)) + geom_point()
+```
+  
+  
+  
+2. rpart package
+```{r}
+library(rpart)
+rpartmod <- rpart(price_by_area~., data = train_lev)
+plot(rpartmod)
+text(rpartmod, cex = 0.5, pretty = 0)
+printcp(rpartmod)
+plotcp(rpartmod)
+```
+    
+    CV
+```{r}
+ptree <- prune(rpartmod, cp = rpartmod$cptable[which.min(rpartmod$cptable[,"xerror"]), "CP"])
+plot(ptree)
+text(ptree, pretty = 0, cex = 0.5)
+```
+    
+  prediction
+```{r}
+rpartpred <- predict(ptree, test_lev)
+rparttest = cbind(test_lev, rpartpred)
+rparttest <- as.data.frame(rparttest)
+str(rparttest)
+attach(rparttest)
+ggplot(as.data.frame(rpartpred), aes(x=longitude, y=latitude, color = rpartpred)) +  geom_point()
+```
+  
+  
+전체적으로 색깔의 차이가 크지 않은 것으로 보아 decision tree는 분류에 특화되어있는 만큼 예측에는 큰 효과가 없는 듯 하다. 예측 결과를 그린 그림을 보아도 값들 간의 차이가 크지 않은 느낌이다. (예측이 아닌 분류를 했으므로 일정 조건을 만족하는 모든 집들이 같은 값을 갖고 있을 것 --> 당연히 편차가 작아진다.) 하지만 우리가 이번 학기동안 배운 내용을 파이널 데이터에 적용해보았다는 데에 큰 의미를 두기로 한다~~
+
