@@ -1,0 +1,131 @@
+---
+title: "week2"
+author: "김주은"
+date: "2019년 3월 26일"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+일단 디렉토리 설정 후 파일을 읽여서 대략적인 모양을 살펴본다.
+```{r}
+setwd("C:\\Users\\Jooeun Kim\\Desktop\\ESC\\2019 SPRING\\[Week 2] Assignment\\dataset")
+data <- read.csv("boston.csv",header=TRUE)
+str(data)
+```
+
+필요한 패키지를 깐다.  
+```{r, include = F}
+library(glmnet)
+library(ggplot2)
+library(corrplot)
+library(dplyr)
+library(leaps)
+```
+  
+1. EDA  
+```{r}
+summary(data)
+attach(data)
+corrplot.mixed(cor(data), lower = "number", upper = "ellipse",number.cex=0.8,number.digits = 2)
+```
+  
+  
+    
+    일단 변수들 간의 correlation이 심각하게 높아보이지는 않는다.
+```{r}
+hist(medv)
+hist(log(medv))
+data$medv <- log(medv)
+```
+  response인 medv는 negatively skewed이므로 log를 취해준다. 그리고 chas와 rad를 categorical variable로 사용하자. factor로 바꾸어주면 lm()함수에서 dummy variables로 만들어준다.
+```{r}
+data1 <- data
+data1$chas <- as.factor(chas)
+data1$rad <- as.factor(rad)
+```
+
+## Partitioning train and test set
+set.seed(191028)
+index <-createDataPartition(y = medv, p = 0.70, list = FALSE)
+training <-data[index,]
+test <-data[-index,]
+  
+2. Full Model
+```{r}
+lm.fit <- lm(medv~.,data=data1[-medv])
+summary(lm.fit)
+```
+13개의 설명변수 중 4개가 남았고, 모두 유의하다는 결과가 나온다. 하지만 adjuseted R^2가 매우 낮다.ㅎㅎ  
+
+3. Variable Selection  
+시뮬레이션을 해 본 결과 가장 좋다고 생각된 AIC를 기준으로 해보았다.
+```{r}
+regfit.full <- regsubsets(medv~.,data=data,nvmax=13)
+reg.summary <- summary(regfit.full)
+which.min(reg.summary$bic)
+
+coef(regfit.full,which.min(reg.summary$bic))
+
+regfit.fwd <- regsubsets(medv~.,data=data,nvmax=13,method="forward")
+reg.summary <- summary(regfit.fwd)
+which.min(reg.summary$bic)
+coef(regfit.fwd,which.min(reg.summary$bic))
+
+regfit.bwd <- regsubsets(medv~.,data=data,nvmax=13,method="backward")
+reg.summary <- summary(regfit.bwd)
+which.min(reg.summary$bic)
+coef(regfit.bwd,which.min(reg.summary$bic))
+```
+신기하게도 best subset, forward, backward selection 모두에서 똑같은 결과가 나온다.  
+
+4. Regularization
+  ridge regression을 수행하는 함수는 `glmnet(alpha=0)`
+```{r}
+x <- as.matrix(data[-medv])
+y <- as.matrix(medv)
+glmnet(x=x, y=y, alpha=0) -> ridge.fit
+ridge.fit
+plot(ridge.fit)
+plot(ridge.fit, xvar="lambda", label=TRUE)
+```
+  
+  $\lambda$가 작아질수록 설명된 deviation의 퍼센티지가 높아지는 사실을 확인할 수 있다. 또한 $\lambda$가 클수록, 즉 penalty가 강하게 부과될 수록, 회귀계수의 추정치들이 0으로 다가간다.    
+  obtaining best $\lambda$  
+```{r}
+cv.glmnet(x=x, y=y, alpha=0, type.measure="mse", nfolds=20) -> ridge.fit.cv
+ridge.fit.cv$lambda.min
+```
+20개의 폴드를 통해 얻을 수 있는 최적의 값을 구하고, 이를 통한 계수들을 구해본다.
+```{r}
+coef(ridge.fit.cv, s="lambda.min")
+predict(ridge.fit.cv, newx=x, s="lambda.min")
+plot(ridge.fit.cv)
+```
+  람다를 통해 구한 계수들의 fitted value를 구해보고, 이 람다에서 에러가 최소화됨을 확인할 있다.  
+  
+ lasso regression을 수행하는 함수는 `glmnet(alpha=1)`
+```{r}
+glmnet(x=x, y=y, alpha=1) -> lasso.fit
+lasso.fit
+plot(lasso.fit)
+plot(lasso.fit, xvar="lambda", label=TRUE)
+```
+  
+  $\lambda$가 커지고 페널티가 강하게 부과될수록 따라 0으로 수렴하는 회귀계수들이 많아 Sparse해진다.
+  
+ obtaining best $\lambda$  
+lasso regression 역시 k-folds cross validation을 통해 test error을 최소화하는 람다를 구하고, 이를 통한 회귀계수 추정치와 fitted value, 그리고 최소화된 error을 확인할 수 있다.
+```{r}
+lasso.fit.cv <- cv.glmnet(x=x, y=y, alpha=1, type.measure="mse", nfolds=20)
+lasso.fit.cv$lambda.min
+coef(lasso.fit.cv, s="lambda.min")
+predict(lasso.fit.cv, newx=x, s="lambda.min")
+plot(lasso.fit.cv)
+```
+
+ 성능 비교
+```{r}
+plot(log(ridge.fit.cv$lambda), ridge.fit.cv$cvm, pch=19, col="red", xlab="log(Lambda)", ylab=ridge.fit.cv$name)
+points(log(lasso.fit.cv$lambda), lasso.fit.cv$cvm, pch=19,col="blue")
+legend("topleft",legend=c("Ridge", "Lasso"), pch=19, col=c("red", "blue"))
+```

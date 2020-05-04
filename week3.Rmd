@@ -1,0 +1,150 @@
+---
+title: "week 3"
+author: "김주은"
+date: "2019년 4월 3일"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r, include = F}
+setwd("C:/Users/Jooeun Kim/Desktop/ESC/2019 SPRING/[Week 3] Assignment")
+data = read.csv('customer.csv')
+
+library(plyr)
+library(corrplot)
+library(ggplot2)
+library(gridExtra)
+library(ggthemes)
+library(MASS)
+library(ROSE)
+library(ROCR)
+library(pROC)
+```
+
+<EDA>
+  일단 데이터를 살펴본다.
+```{r}
+str(data)
+head(data)
+attach(data)
+
+cols_recode1 = c(10:15)
+for(i in 1:ncol(data[,cols_recode1])) {
+  data[,cols_recode1][,i] = as.factor(mapvalues
+                                        (data[,cols_recode1][,i], from =c("No internet service"),to=c("No")))
+}
+
+data$MultipleLines = as.factor(mapvalues(data$MultipleLines, 
+                                           from=c("No phone service"),
+                                           to=c("No")))
+
+data$SeniorCitizen = as.factor(mapvalues(data$SeniorCitizen,
+                                           from=c("0","1"),
+                                           to=c("No", "Yes")))
+```
+  의미없는 변수 customer ID와 상관계수가 높은 Total Charges를 삭제한다.
+```{r}
+numeric.var = sapply(data, is.numeric)
+corr.matrix = cor(data[,numeric.var])
+corrplot(corr.matrix, method="number")
+
+data$customerID = NULL
+data$TotalCharges = NULL
+```
+
+A. Splitting the data  
+imbalanced data 이므로 정리해준 뒤 splitting 한다.
+```{r}
+data.rose = ROSE(Churn ~ . ,data=data,seed=1)$data
+table(data.rose$Churn)
+data = data.rose
+
+samp_size <- floor(0.7 * nrow(data))
+set.seed(123)
+train_ind <- sample(seq_len(nrow(data)), size = samp_size)
+train <- data[train_ind, ]
+test <- data[-train_ind, ]
+```
+  
+  
+B. Logistic Regression
+  3-fold cross validation을 해본다.
+```{r}
+accuracy <- NULL
+mean.accuracy <- NULL
+for(i in 1:3){
+set.seed(i)
+for(j in 1:3){
+ind.x = sample(x=3, size=nrow(train), replace=T)
+trainset = train[ind.x!=j,]
+validset = train[ind.x==j,]
+valid.x = validset[,-19]
+model=glm(Churn~.,data=trainset,family='binomial')
+validset$Churn = as.character(validset$Churn)
+validset$Churn[validset$Churn=="No"] = "0"
+validset$Churn[validset$Churn=="Yes"] = "1"
+p = predict(model,newdata=valid.x,type='response')
+mat = as.matrix(table(round(p),validset$Churn))
+accuracy[j] = (mat[1,1]+mat[2,2])/(mat[1,1]+mat[1,2]+mat[2,1]+mat[2,2])
+}
+mean.accuracy[i] = mean(accuracy)
+if(i==3){print(mean.accuracy)}
+}
+```
+k = 3일때의 결과가 가장 좋아 보이므로 seed를 3으로 설정한다.  
+
+```{r}
+set.seed(3)
+ind.x = sample(x=2, size=nrow(train), replace=T,prob=c(0.7,0.3))
+model=glm(Churn~.,data=train,family='binomial')
+summary(model)
+anova(model, test="Chisq")
+``` 
+  이 결과를 통해 p-value가 유의미하다고 나타난 변수들을 남겨놓을 수 있겠다.
+  결국 최종 모델은 다음과 같다.
+```{r}
+mod <- glm(Churn ~ SeniorCitizen+tenure+InternetService+TechSupport+StreamingTV+Contract+PaperlessBilling+PaymentMethod, data = train, family = 'binomial')
+summary(mod)
+```
+
+ C. Confusion Matrix  
+```{r}
+test$Churn = as.character(test$Churn)
+test$Churn[validset$Churn=="No"] = "0"
+test$Churn[validset$Churn=="Yes"] = "1"
+p = predict(model,newdata=test,type='response')
+prediction.value = ifelse(p>0.5,1,0)
+misprediction.prob = mean(p!=test$Churn)
+confusion.matrix = as.matrix(table(test$Churn, prediction.value > 0.5))
+print(confusion.matrix)
+TP <- confusion.matrix[2,2]
+TN <- confusion.matrix[1,1]
+FP <- confusion.matrix[2,1]
+FN <- confusion.matrix[1,2]
+precision <- TP / (TP+FP)
+recall <- TP / (TP+FN)
+F1 <- 2 * TP / (2*TP + FP + FN)
+precision
+recall
+F1
+```
+
+  
+  D. AUC computation
+  Train Set
+```{r}
+pred <- predict(mod, type = 'response', newdata = validset)
+fitted <- fitted.values(mod)
+options(repr.plot.width =10, repr.plot.height = 8)
+
+validation.roc <- roc(response = validset$Churn, predictor = as.numeric(pred))
+train.roc <- roc(response = train$Churn, predictor = as.numeric(fitted))
+
+plot(validation.roc, col = 'blue', legacy.axes = TRUE, print.auc.y = 1.0, print.auc = TRUE)
+plot(train.roc,  col='red',    add = TRUE, print.auc.y = 1.0, print.auc = TRUE)
+
+legend("right", c('train','validation'), lty=c(1,1), lwd=c(2,2),
+       col=c('red','blue'))
+validation.roc$auc
+train.roc$auc
+```
